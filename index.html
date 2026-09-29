@@ -293,7 +293,7 @@ function renderThumbs(){
   });
 }
 function addFiles(list){
-  const imgs = Array.from(list).filter(f => f.type && f.type.startsWith("image/"));
+  const imgs = Array.from(list).filter(f => !f.type || f.type.startsWith("image/"));
   files = files.concat(imgs).slice(0, 4);
   renderThumbs();
   if(imgs.length && Array.from(list).length > 4) status("read", "最多 4 張，只保留前 4 張。", true);
@@ -508,6 +508,8 @@ $("replyBtn").onclick = async () => {
 async function takeShared(){
   if(!new URLSearchParams(location.search).has("shared") || !("caches" in window)) return;
   history.replaceState(null, "", location.pathname);
+  setTab("read");
+  status("read", "收到分享的內容，準備翻譯…");
   try{
     const cache = await caches.open("share");
     const keys = await cache.keys();
@@ -518,10 +520,16 @@ async function takeShared(){
       else { const blob = await res.blob(); got.push(new File([blob], "shared.jpg", { type: blob.type || "image/jpeg" })); }
       await cache.delete(req);
     }
-    if(got.length) addFiles(got);
-    setTab("read");
-    if(store.get("pass") && (got.length || $("readText").value.trim())) $("readBtn").click();
-  }catch(e){}
+    if(got.length){ files = []; addFiles(got); }
+    if(!got.length && !$("readText").value.trim()){
+      status("read", "沒有收到分享的截圖。請關掉翻譯年糕後再分享一次；還是不行的話，改用「上傳截圖」。", true);
+      return;
+    }
+    if(!store.get("pass")){ status("read", "先輸入通關密碼，再按「翻譯成中文」。", true); return; }
+    $("readBtn").click();
+  }catch(e){
+    status("read", "讀取分享的截圖失敗，請改用「上傳截圖」。（" + (e?.message || e) + "）", true);
+  }
 }
 
 /* ---------- 安裝提示 ---------- */
@@ -538,6 +546,11 @@ async function takeShared(){
 
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+// 從分享進來卻沒有被 service worker 接住時（GitHub Pages 會回 405），這個網址不會出現；
+// 這裡只處理「有 ?shared 但 service worker 還沒啟用」的情況
+if(new URLSearchParams(location.search).has("shared") && "serviceWorker" in navigator && !navigator.serviceWorker.controller){
+  status("read", "App 剛更新，請關掉翻譯年糕後再分享一次。", true);
 }
 takeShared();
 loadUsage();

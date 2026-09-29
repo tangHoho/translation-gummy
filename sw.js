@@ -23,13 +23,14 @@ self.addEventListener("fetch", e => {
   if (e.request.method === "POST" && url.origin === location.origin && url.pathname.endsWith("/share")) {
     e.respondWith((async () => {
       const form = await e.request.formData();
-      const files = form.getAll("images").filter(f => f && f.type && f.type.startsWith("image/")).slice(0, 4);
+      // 有些手機分享的檔案沒有標示類型，所以只要是檔案就收下
+      const files = form.getAll("images").filter(f => f && typeof f !== "string" && f.size > 0).slice(0, 4);
       const text = [form.get("title"), form.get("text"), form.get("url")].filter(Boolean).join("\n");
       const cache = await caches.open(SHARE_CACHE);
       for (const k of await cache.keys()) await cache.delete(k);
       for (let i = 0; i < files.length; i++) {
         await cache.put(new URL(`./shared/img${i}`, self.registration.scope).href,
-          new Response(files[i], { headers: { "content-type": files[i].type } }));
+          new Response(files[i], { headers: { "content-type": files[i].type || "image/jpeg" } }));
       }
       if (text) await cache.put(new URL("./shared/text", self.registration.scope).href, new Response(text));
       return Response.redirect(new URL("./?shared=1", self.registration.scope).href, 303);
