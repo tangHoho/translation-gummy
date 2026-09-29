@@ -1,0 +1,27 @@
+name = "translation-gummy"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+# 允許呼叫的網址（你的 GitHub Pages 網域），多個用逗號分隔
+ALLOWED_ORIGINS = "https://YOUR-GITHUB-NAME.github.io"
+# 每天最多翻譯幾次（所有人合計，需綁定下面的 KV 才會生效）
+DAILY_LIMIT = "300"
+# 預設翻譯引擎：claude 或 gemini（兩把金鑰都設定時，App 裡可以自己切換）
+ENGINE = "claude"
+# 使用的 Claude 模型
+MODEL = "claude-haiku-4-5-20251001"
+# 使用的 Gemini 模型與思考程度（low 最快）
+GEMINI_MODEL = "gemini-3.8-flash"
+GEMINI_THINKING = "low"
+
+# 每日次數計數用。先執行：npx wrangler kv namespace create USAGE
+# 再把拿到的 id 貼到下面，並把這三行前面的 # 拿掉
+# [[kv_namespaces]]
+# binding = "USAGE"
+# id = "PASTE_KV_ID_HERE"
+
+# 機密設定不要寫在這裡，用指令設定：
+#   npx wrangler secret put ANTHROPIC_API_KEY
+#   npx wrangler secret put GEMINI_API_KEY      （要用 Gemini 才需要）
+#   npx wrangler secret put PASSCODE
