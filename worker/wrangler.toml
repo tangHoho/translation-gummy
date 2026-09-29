@@ -2,6 +2,11 @@ name = "translation-gummy"
 main = "worker.js"
 compatibility_date = "2025-09-01"
 
+# 讓 Worker 固定在美國的機房執行。
+# 台灣連線常會被分到香港機房，而 Gemini 與 Claude 的 API 都不支援從香港呼叫
+[placement]
+region = "gcp:us-central1"
+
 [observability]
 enabled = true
 
