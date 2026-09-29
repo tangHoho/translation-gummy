@@ -306,25 +306,40 @@ document.addEventListener("paste", e => {
 });
 
 // 縮小圖片再上傳：長邊最多 1568px，省流量也省費用
-function shrink(file){
+// 把截圖切成幾段再上傳：長截圖整張縮小會讓字變太小、看不清楚。
+// 每段寬度最多 1080px、高度最多 1400px（不會被 AI 再縮小），段與段之間重疊 80px 避免切到字
+function loadImage(file){
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const max = 1568;
-      const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-      const w = Math.round(img.naturalWidth * s), h = Math.round(img.naturalHeight * s);
-      const c = document.createElement("canvas"); c.width = w; c.height = h;
-      const ctx = c.getContext("2d");
-      ctx.fillStyle = "#fff"; ctx.fillRect(0,0,w,h);
-      ctx.drawImage(img, 0, 0, w, h);
-      URL.revokeObjectURL(url);
-      const data = c.toDataURL("image/jpeg", 0.85).split(",")[1];
-      resolve({ media_type: "image/jpeg", data });
-    };
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image")); };
     img.src = url;
   });
+}
+async function toTiles(file, maxTiles){
+  const img = await loadImage(file);
+  const TILE_H = 1400, OVERLAP = 80, MAX_W = 1080;
+  let s = Math.min(1, MAX_W / img.naturalWidth);
+  let W = Math.round(img.naturalWidth * s), H = Math.round(img.naturalHeight * s);
+  // 段數超過上限時，整張再等比例縮小到剛好放得下
+  const need = H <= TILE_H ? 1 : Math.ceil((H - OVERLAP) / (TILE_H - OVERLAP));
+  if(need > maxTiles){
+    const maxH = maxTiles * (TILE_H - OVERLAP) + OVERLAP;
+    const k = maxH / H; s *= k; W = Math.round(W * k); H = Math.round(H * k);
+  }
+  const count = H <= TILE_H ? 1 : Math.ceil((H - OVERLAP) / (TILE_H - OVERLAP));
+  const tiles = [];
+  for(let i = 0; i < count; i++){
+    const y = Math.min(i * (TILE_H - OVERLAP), Math.max(0, H - TILE_H));
+    const h = Math.min(TILE_H, H);
+    const c = document.createElement("canvas"); c.width = W; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, h);
+    ctx.drawImage(img, 0, y / s, img.naturalWidth, h / s, 0, 0, W, h);
+    tiles.push({ media_type: "image/jpeg", data: c.toDataURL("image/jpeg", 0.9).split(",")[1] });
+  }
+  return tiles;
 }
 
 /* ---------- 呼叫後端 ---------- */
@@ -437,7 +452,8 @@ $("readBtn").onclick = async () => {
   $("readBtn").disabled = true;
   status("read", files.length ? "讀取截圖中，大約 5–15 秒…" : "翻譯中…");
   try{
-    const images = await Promise.all(files.map(shrink));
+    const maxTiles = files.length <= 2 ? 3 : 2;  // 全部最多 8 段
+    const images = (await Promise.all(files.map(f => toTiles(f, maxTiles)))).flat().slice(0, 8);
     const r = await callApi({ mode: "read", text, images });
     if(!r || !Array.isArray(r.messages)) throw { code: "bad_output" };
     renderResult(r, false);

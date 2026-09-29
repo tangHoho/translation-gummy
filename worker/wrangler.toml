@@ -24,6 +24,8 @@ ENGINE = "claude"
 # 引擎忙碌時自動改用另一個引擎（1 開啟、0 關閉）
 FALLBACK = "1"
 # 使用的 Claude 模型
+# claude-haiku-4-5-20251001：最便宜（每張截圖約 NT$0.3）
+# claude-sonnet-5-5：翻得比較細膩，費用約 Haiku 的 2 倍（每張截圖約 NT$0.6）
 MODEL = "claude-haiku-4-5-20251001"
 # 使用的 Gemini 模型與思考程度（low 最快）
 GEMINI_MODEL = "gemini-3.8-flash"
