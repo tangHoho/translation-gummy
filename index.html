@@ -513,18 +513,26 @@ async function takeShared(){
   try{
     const cache = await caches.open("share");
     const keys = await cache.keys();
+    let meta = null, text = "";
     const got = [];
     for(const req of keys){
       const res = await cache.match(req);
-      if(req.url.endsWith("/shared/text")) $("readText").value = await res.text();
+      if(req.url.endsWith("/shared/meta")) meta = await res.json().catch(() => null);
+      else if(req.url.endsWith("/shared/text")) text = await res.text();
       else { const blob = await res.blob(); got.push(new File([blob], "shared.jpg", { type: blob.type || "image/jpeg" })); }
-      await cache.delete(req);
     }
+    // 分享的內容保留在快取裡（頁面重新載入也讀得到），用 id 避免同一次分享被自動翻兩次
+    const seen = store.get("sharedId");
+    const fresh = meta && String(meta.id) !== seen && Date.now() - meta.id < 5 * 60 * 1000;
     if(got.length){ files = []; addFiles(got); }
-    if(!got.length && !$("readText").value.trim()){
-      status("read", "沒有收到分享的截圖。請關掉翻譯年糕後再分享一次；還是不行的話，改用「上傳截圖」。", true);
+    if(text && !$("readText").value.trim()) $("readText").value = text;
+    if(!got.length && !text){
+      const why = meta ? `（收到 ${meta.files} 個檔案；欄位：${meta.fields.join(", ") || "無"}）` : "（沒有分享紀錄）";
+      status("read", "沒有收到分享的截圖。請改用「上傳截圖」，並把這段訊息截圖給管理者：" + why, true);
       return;
     }
+    if(!fresh){ status("read", "已載入分享的截圖，按「翻譯成中文」開始。"); return; }
+    store.set("sharedId", String(meta.id));
     if(!store.get("pass")){ status("read", "先輸入通關密碼，再按「翻譯成中文」。", true); return; }
     $("readBtn").click();
   }catch(e){

@@ -23,11 +23,15 @@ self.addEventListener("fetch", e => {
   if (e.request.method === "POST" && url.origin === location.origin && url.pathname.endsWith("/share")) {
     e.respondWith((async () => {
       const form = await e.request.formData();
-      // 有些手機分享的檔案沒有標示類型，所以只要是檔案就收下
-      const files = form.getAll("images").filter(f => f && typeof f !== "string" && f.size > 0).slice(0, 4);
-      const text = [form.get("title"), form.get("text"), form.get("url")].filter(Boolean).join("\n");
+      // 不管欄位名稱、有沒有標示類型，只要是檔案就收下
+      const all = [...form.entries()];
+      const files = all.map(([, v]) => v).filter(v => v && typeof v !== "string" && v.size > 0).slice(0, 4);
+      const text = ["title", "text", "url"].map(k => form.get(k)).filter(v => typeof v === "string" && v).join("\n");
       const cache = await caches.open(SHARE_CACHE);
       for (const k of await cache.keys()) await cache.delete(k);
+      // 記錄這次分享的資訊，方便頁面判斷與除錯
+      const meta = { id: Date.now(), files: files.length, fields: all.map(([k, v]) => k + (typeof v === "string" ? "" : ":file")) };
+      await cache.put(new URL("./shared/meta", self.registration.scope).href, new Response(JSON.stringify(meta)));
       for (let i = 0; i < files.length; i++) {
         await cache.put(new URL(`./shared/img${i}`, self.registration.scope).href,
           new Response(files[i], { headers: { "content-type": files[i].type || "image/jpeg" } }));
