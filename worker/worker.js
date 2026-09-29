@@ -3,6 +3,9 @@
 // 只做「翻譯」這一件事。
 // 不記錄任何訊息內容。
 
+// 後端版本號：每次更新 Worker 都改這裡
+const WORKER_VERSION = "1.0.1";
+
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const MAX_IMAGES = 4;
@@ -67,11 +70,12 @@ export default {
     let out;
     try {
       out = engine === "gemini" ? await callGemini(content, env) : await callClaude(content, env);
-    } catch {
-      return json({ error: "upstream", _usage: meter.summary() }, 502);
+    } catch (e) {
+      console.log(`[${engine}] fetch failed: ${String(e?.message || e).slice(0, 200)}`);
+      return json({ error: "upstream", engine, detail: String(e?.message || e).slice(0, 200), _usage: meter.summary() }, 502);
     }
     if (out.usage) await meter.addTokens(engine, out.usage);
-    if (out.error) return json({ error: out.error, status: out.status, _usage: meter.summary() }, 502);
+    if (out.error) return json({ error: out.error, status: out.status, engine, detail: out.detail, _usage: meter.summary() }, 502);
 
     const parsed = extractJSON(out.text);
     if (!parsed || typeof parsed !== "object") return json({ error: "bad_output", _usage: meter.summary() }, 502);
@@ -129,6 +133,7 @@ class Meter {
   summary() {
     const r4 = n => Math.round(n * 10000) / 10000;
     return {
+      serverVersion: WORKER_VERSION,
       tracking: !!this.kv,
       today: this.today,
       dailyLimit: this.dailyLimit,
@@ -155,14 +160,23 @@ const busyStatus = s => s === 429 || s === 503 || s === 529;
 
 // 看錯誤內容判斷是不是「儲值／帳單額度用完」
 async function classifyError(res, engine) {
-  let msg = "";
-  try { msg = JSON.stringify(await res.json()).toLowerCase(); } catch {}
+  let raw = "";
+  try { raw = await res.text(); } catch {}
+  let detail = raw;
+  try { const j = JSON.parse(raw); detail = j?.error?.message || j?.error?.type || j?.[0]?.error?.message || raw; } catch {}
+  detail = String(detail).replace(/\s+/g, " ").slice(0, 300);
+  // 只記錄錯誤狀態與官方錯誤訊息，不記錄使用者內容；可在 Cloudflare 的 Worker → Logs 查看
+  console.log(`[${engine}] upstream error ${res.status}: ${detail}`);
+  const msg = raw.toLowerCase();
+  const base = { status: res.status, engine, detail };
   const noCredit = engine === "claude"
-    ? /credit balance|billing|purchase credits/.test(msg)
-    : /billing|quota|resource_exhausted|exceeded your current/.test(msg) && res.status !== 503;
-  if (noCredit) return { error: "no_credit", status: res.status };
-  if (res.status === 401 || res.status === 403) return { error: "bad_api_key", status: res.status };
-  return { error: busyStatus(res.status) ? "busy" : "upstream", status: res.status };
+    ? /credit balance|purchase credits/.test(msg)
+    : /billing|exceeded your current quota/.test(msg);
+  if (noCredit) return { error: "no_credit", ...base };
+  if (res.status === 401 || res.status === 403) return { error: "bad_api_key", ...base };
+  if (res.status === 429) return { error: "rate_limited", ...base };
+  if (res.status === 404) return { error: "bad_model", ...base };
+  return { error: busyStatus(res.status) ? "busy" : "upstream", ...base };
 }
 
 async function callClaude(content, env) {

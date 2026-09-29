@@ -75,6 +75,13 @@ npx wrangler deploy
 | `GEMINI_THINKING` | Gemini 思考程度：`low`（最快）、`medium`、`high` |
 | `ALLOWED_ORIGINS` | 允許呼叫的網域 |
 
+## 版本號
+
+- 前端版本在 `version.js`，後端版本在 `worker/worker.js` 的 `WORKER_VERSION`
+- App 最下面會顯示兩者，方便確認朋友手機上是不是最新版
+- 更新前端時記得改 `version.js`，大家的離線快取才會換成新版
+- 每次改了什麼記在 `CHANGELOG.md`
+
 ## 用量提示與上限
 
 需要綁定 KV（`USAGE`）才會生效。

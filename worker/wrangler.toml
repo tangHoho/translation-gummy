@@ -2,6 +2,9 @@ name = "translation-gummy"
 main = "worker.js"
 compatibility_date = "2025-09-01"
 
+[observability]
+enabled = true
+
 [vars]
 # 允許呼叫的網址（你的 GitHub Pages 網域），多個用逗號分隔
 ALLOWED_ORIGINS = "https://YOUR-GITHUB-NAME.github.io"

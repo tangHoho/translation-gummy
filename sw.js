@@ -1,7 +1,8 @@
 // 翻譯年糕 service worker：離線快取 + Android「分享到這個 App」
-const CACHE = "gummy-v4";
+importScripts("version.js");
+const CACHE = "gummy-" + self.APP_VERSION;
 const SHARE_CACHE = "share";
-const ASSETS = ["./", "./index.html", "./config.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"];
+const ASSETS = ["./", "./index.html", "./config.js", "./version.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
