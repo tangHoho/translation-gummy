@@ -12,7 +12,7 @@ enabled = true
 
 [vars]
 # 允許呼叫的網址（你的 GitHub Pages 網域），多個用逗號分隔
-ALLOWED_ORIGINS = "https://YOUR-GITHUB-NAME.github.io"
+ALLOWED_ORIGINS = "https://tanghoho.github.io"
 # 每天最多翻譯幾次（所有人合計，需綁定下面的 KV 才會生效）
 DAILY_LIMIT = "300"
 # 每月預算上限（美元）。估算的費用到達這個數字就暫停翻譯，下個月自動恢復；設 0 代表不限制
@@ -29,9 +29,9 @@ GEMINI_THINKING = "low"
 
 # 每日次數與每月用量統計用（沒有綁定的話，用量提示和上限都不會生效）。先執行：npx wrangler kv namespace create USAGE
 # 再把拿到的 id 貼到下面，並把這三行前面的 # 拿掉
-# [[kv_namespaces]]
-# binding = "USAGE"
-# id = "PASTE_KV_ID_HERE"
+[[kv_namespaces]]
+binding = "USAGE"
+id = "e507f6139ca04519a4d3138f7a81964b"
 
 # 機密設定不要寫在這裡，用指令設定：
 #   npx wrangler secret put ANTHROPIC_API_KEY
