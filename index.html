@@ -299,7 +299,15 @@ function addFiles(list){
   if(imgs.length && Array.from(list).length > 4) status("read", "最多 4 張，只保留前 4 張。", true);
 }
 $("uploadBtn").onclick = () => $("file").click();
-$("file").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
+// 選好截圖就自動開始翻譯（可一次選多張）
+$("file").onchange = e => {
+  const picked = e.target.files;
+  if(!picked || !picked.length) return;
+  files = [];
+  addFiles(picked);
+  e.target.value = "";
+  if(files.length && store.get("pass")) $("readBtn").click();
+};
 document.addEventListener("paste", e => {
   const imgs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
   if(imgs.length){ e.preventDefault(); addFiles(imgs); setTab("read"); }
