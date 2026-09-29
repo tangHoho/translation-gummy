@@ -44,9 +44,10 @@ self.addEventListener("fetch", e => {
 
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
 
-  // 先用網路（拿到最新版），沒網路才用快取
+  // 先用網路（拿到最新版），沒網路才用快取。
+  // no-cache：每次都跟 GitHub 確認有沒有新版，避免瀏覽器快取住舊檔（GitHub Pages 預設快取 10 分鐘）
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: "no-cache" })
       .then(res => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
         return res;

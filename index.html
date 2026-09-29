@@ -553,7 +553,18 @@ async function takeShared(){
 })();
 
 if("serviceWorker" in navigator){
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  // updateViaCache: none → 每次都檢查 sw.js 與 version.js 有沒有新版
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
+    .then(reg => reg.update())
+    .catch(() => {});
+  // 新版接手時自動重新整理一次，讓畫面換成新版
+  let reloaded = false;
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if(!hadController || reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
 }
 // 從分享進來卻沒有被 service worker 接住時（GitHub Pages 會回 405），這個網址不會出現；
 // 這裡只處理「有 ?shared 但 service worker 還沒啟用」的情況
