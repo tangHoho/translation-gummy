@@ -67,11 +67,26 @@ npx wrangler deploy
 | 設定 | 說明 |
 |---|---|
 | `DAILY_LIMIT` | 所有人合計每天可翻譯幾次，預設 300 |
+| `MONTHLY_BUDGET_USD` | 每月預算上限（美元），預設 15（約 NT$480）。估算費用到達就暫停，下個月自動恢復；設 `0` 不限制 |
+| `TWD_RATE` | 顯示台幣用的匯率，預設 32 |
 | `ENGINE` | 預設翻譯引擎：`claude` 或 `gemini` |
 | `MODEL` | 使用的 Claude 模型，預設 Haiku 4.5（快又便宜）。想要翻得更細膩可換成 Sonnet，但費用較高 |
 | `GEMINI_MODEL` | 使用的 Gemini 模型，預設 `gemini-3.8-flash` |
 | `GEMINI_THINKING` | Gemini 思考程度：`low`（最快）、`medium`、`high` |
 | `ALLOWED_ORIGINS` | 允許呼叫的網域 |
+
+## 用量提示與上限
+
+需要綁定 KV（`USAGE`）才會生效。
+
+- App 下方的「共用額度」卡片顯示：今天用了幾次／每日上限、本月估算費用／每月預算
+- 每次翻譯完成會顯示「這次約 NT$0.19」
+- 用到 80% 時頁面上方出現黃色提醒；到 100% 會暫停翻譯並顯示原因
+- 第一次輸入通關密碼時，會先看到費用與敏感資料的提醒
+- 費用是依官方價格和實際 token 數估算的，準確的金額以 Anthropic Console／Google 帳單為準
+- 單價寫在 `worker.js` 的 `priceFor()`，官方調價時改這裡
+
+建議仍在 Anthropic Console（Billing → Spend limits）另外設定每月上限，當作最後一道保險。
 
 ## 比較 Claude 和 Gemini
 

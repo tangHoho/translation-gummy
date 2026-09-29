@@ -1,5 +1,6 @@
 // 翻譯年糕 — Cloudflare Worker 後端
-// 保管 API 金鑰（Claude / Gemini）、檢查通關密碼、限制每日次數，只做「翻譯」這一件事。
+// 保管 API 金鑰（Claude / Gemini）、檢查通關密碼、統計用量與費用、限制每日次數與每月預算。
+// 只做「翻譯」這一件事。
 // 不記錄任何訊息內容。
 
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
@@ -18,7 +19,7 @@ export default {
     const originOk = allowed.length === 0 || allowed.includes(origin);
     const cors = {
       "Access-Control-Allow-Origin": originOk && origin ? origin : "null",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, X-Pass",
       "Access-Control-Max-Age": "86400",
       "Vary": "Origin",
@@ -27,25 +28,29 @@ export default {
       new Response(JSON.stringify(obj), { status, headers: { ...cors, "Content-Type": "application/json; charset=utf-8" } });
 
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-    if (req.method !== "POST" || new URL(req.url).pathname !== "/translate") return json({ error: "not_found" }, 404);
+    const path = new URL(req.url).pathname;
+    const isTranslate = req.method === "POST" && path === "/translate";
+    const isUsage = req.method === "GET" && path === "/usage";
+    if (!isTranslate && !isUsage) return json({ error: "not_found" }, 404);
     if (!originOk) return json({ error: "forbidden" }, 403);
-    if (!env.ANTHROPIC_API_KEY && !env.GEMINI_API_KEY) return json({ error: "server_not_ready" }, 500);
 
     const pass = req.headers.get("X-Pass") || "";
     if (!env.PASSCODE || !safeEqual(pass, env.PASSCODE)) return json({ error: "bad_pass" }, 401);
 
+    const meter = new Meter(env);
+    await meter.load();
+
+    // 查詢用量（不會產生費用）
+    if (isUsage) return json({ _usage: meter.summary() });
+
+    if (!env.ANTHROPIC_API_KEY && !env.GEMINI_API_KEY) return json({ error: "server_not_ready" }, 500);
+
     let body;
     try { body = await req.json(); } catch { return json({ error: "bad_request" }, 400); }
 
-    // 每日次數上限（有綁定 KV 才會啟用）
-    if (env.USAGE) {
-      const day = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10); // 台灣時間
-      const key = "day:" + day;
-      const used = parseInt((await env.USAGE.get(key)) || "0", 10);
-      const cap = parseInt(env.DAILY_LIMIT || "300", 10);
-      if (used >= cap) return json({ error: "daily_limit" }, 429);
-      await env.USAGE.put(key, String(used + 1), { expirationTtl: 172800 });
-    }
+    // 上限檢查：每月預算、每日次數
+    if (meter.overBudget()) return json({ error: "monthly_budget", _usage: meter.summary() }, 429);
+    if (meter.overDaily()) return json({ error: "daily_limit", _usage: meter.summary() }, 429);
 
     let content;
     try {
@@ -57,19 +62,85 @@ export default {
     const engine = pickEngine(body.engine, env);
     if (!engine) return json({ error: "server_not_ready" }, 500);
 
+    await meter.countRequest();
+
     let out;
     try {
       out = engine === "gemini" ? await callGemini(content, env) : await callClaude(content, env);
     } catch {
-      return json({ error: "upstream" }, 502);
+      return json({ error: "upstream", _usage: meter.summary() }, 502);
     }
-    if (out.error) return json({ error: out.error, status: out.status }, 502);
+    if (out.usage) await meter.addTokens(engine, out.usage);
+    if (out.error) return json({ error: out.error, status: out.status, _usage: meter.summary() }, 502);
+
     const parsed = extractJSON(out.text);
-    if (!parsed || typeof parsed !== "object") return json({ error: "bad_output" }, 502);
+    if (!parsed || typeof parsed !== "object") return json({ error: "bad_output", _usage: meter.summary() }, 502);
     parsed._engine = engine;
+    parsed._usage = meter.summary();
     return json(parsed);
   },
 };
+
+// ---------- 用量與費用 ----------
+// 每百萬 token 的美元價格（官方定價，價格變動時改這裡）
+function priceFor(engine, now = new Date()) {
+  if (engine === "gemini") {
+    // Gemini 3.8 Flash：2026/12/31 前優惠價，2027/1/1 起漲一倍
+    return now < new Date("2027-01-01T00:00:00Z") ? { in: 0.75, out: 3.75 } : { in: 1.5, out: 7.5 };
+  }
+  return { in: 1, out: 5 }; // Claude Haiku 4.5
+}
+
+const twNow = () => new Date(Date.now() + 8 * 3600e3); // 台灣時間
+
+class Meter {
+  constructor(env) {
+    this.kv = env.USAGE || null;
+    this.dailyLimit = parseInt(env.DAILY_LIMIT || "300", 10);
+    this.budget = parseFloat(env.MONTHLY_BUDGET_USD || "15");
+    this.rate = parseFloat(env.TWD_RATE || "32");
+    const t = twNow().toISOString();
+    this.dayKey = "day:" + t.slice(0, 10);
+    this.monthKey = "month:" + t.slice(0, 7);
+    this.today = 0;
+    this.month = { requests: 0, inTokens: 0, outTokens: 0, costUSD: 0 };
+  }
+  async load() {
+    if (!this.kv) return;
+    const [d, m] = await Promise.all([this.kv.get(this.dayKey), this.kv.get(this.monthKey, "json")]);
+    this.today = parseInt(d || "0", 10);
+    if (m) this.month = { ...this.month, ...m };
+  }
+  overDaily() { return !!this.kv && this.today >= this.dailyLimit; }
+  overBudget() { return !!this.kv && this.budget > 0 && this.month.costUSD >= this.budget; }
+  async countRequest() {
+    this.today += 1;
+    this.month.requests += 1;
+    if (this.kv) await this.kv.put(this.dayKey, String(this.today), { expirationTtl: 172800 });
+  }
+  async addTokens(engine, u) {
+    const p = priceFor(engine);
+    this.month.inTokens += u.in;
+    this.month.outTokens += u.out;
+    this.month.costUSD += (u.in * p.in + u.out * p.out) / 1e6;
+    this.lastCostUSD = (u.in * p.in + u.out * p.out) / 1e6;
+    if (this.kv) await this.kv.put(this.monthKey, JSON.stringify(this.month), { expirationTtl: 86400 * 70 });
+  }
+  summary() {
+    const r4 = n => Math.round(n * 10000) / 10000;
+    return {
+      tracking: !!this.kv,
+      today: this.today,
+      dailyLimit: this.dailyLimit,
+      monthRequests: this.month.requests,
+      monthTokens: this.month.inTokens + this.month.outTokens,
+      monthCostUSD: r4(this.month.costUSD),
+      monthBudgetUSD: this.budget,
+      twdRate: this.rate,
+      lastCostUSD: this.lastCostUSD != null ? Math.round(this.lastCostUSD * 10000) / 10000 : null,
+    };
+  }
+}
 
 // 決定用哪個翻譯引擎：前端指定且有金鑰就用指定的，否則用 ENGINE 預設值
 function pickEngine(requested, env) {
@@ -81,6 +152,18 @@ function pickEngine(requested, env) {
 }
 
 const busyStatus = s => s === 429 || s === 503 || s === 529;
+
+// 看錯誤內容判斷是不是「儲值／帳單額度用完」
+async function classifyError(res, engine) {
+  let msg = "";
+  try { msg = JSON.stringify(await res.json()).toLowerCase(); } catch {}
+  const noCredit = engine === "claude"
+    ? /credit balance|billing|purchase credits/.test(msg)
+    : /billing|quota|resource_exhausted|exceeded your current/.test(msg) && res.status !== 503;
+  if (noCredit) return { error: "no_credit", status: res.status };
+  if (res.status === 401 || res.status === 403) return { error: "bad_api_key", status: res.status };
+  return { error: busyStatus(res.status) ? "busy" : "upstream", status: res.status };
+}
 
 async function callClaude(content, env) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -96,9 +179,14 @@ async function callClaude(content, env) {
       messages: [{ role: "user", content }],
     }),
   });
-  if (!res.ok) return { error: busyStatus(res.status) ? "busy" : "upstream", status: res.status };
+  if (!res.ok) return classifyError(res, "claude");
   const data = await res.json();
-  return { text: (data.content || []).filter(b => b.type === "text").map(b => b.text).join("") };
+  const u = data.usage || {};
+  const usage = {
+    in: (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0),
+    out: u.output_tokens || 0,
+  };
+  return { text: (data.content || []).filter(b => b.type === "text").map(b => b.text).join(""), usage };
 }
 
 async function callGemini(content, env) {
@@ -121,12 +209,15 @@ async function callGemini(content, env) {
       },
     }),
   });
-  if (!res.ok) return { error: busyStatus(res.status) ? "busy" : "upstream", status: res.status };
+  if (!res.ok) return classifyError(res, "gemini");
   const data = await res.json();
+  const m = data.usageMetadata || {};
+  // 思考用的 token 也算在輸出費用裡
+  const usage = { in: m.promptTokenCount || 0, out: (m.candidatesTokenCount || 0) + (m.thoughtsTokenCount || 0) };
   const cand = data.candidates?.[0];
-  if (!cand) return { error: "refused" };
+  if (!cand) return { error: "refused", usage };
   const text = (cand.content?.parts || []).filter(p => typeof p.text === "string" && !p.thought).map(p => p.text).join("");
-  return { text };
+  return { text, usage };
 }
 
 function clean(s, max) {

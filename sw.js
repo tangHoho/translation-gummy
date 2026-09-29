@@ -1,5 +1,5 @@
 // 翻譯年糕 service worker：離線快取 + Android「分享到這個 App」
-const CACHE = "gummy-v3";
+const CACHE = "gummy-v4";
 const SHARE_CACHE = "share";
 const ASSETS = ["./", "./index.html", "./config.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"];
 

@@ -17,7 +17,7 @@
 :root{
   --bg:#f3f5f7; --surface:#ffffff; --ink:#18232e; --muted:#5d6b78; --line:#dde3e9;
   --accent:#2b5d8a; --accent-ink:#ffffff; --hl:#ffe98a; --hl-ink:#3a2f00;
-  --them:#ffffff; --me:#dbe8f4; --warn:#b3422f;
+  --them:#ffffff; --me:#dbe8f4; --warn:#b3422f; --amber:#b7791f; --amber-bg:#fff4dc;
   --f-display:"LXGW WenKai TC","Noto Sans TC",system-ui,sans-serif;
   --f-body:"Noto Sans TC",system-ui,-apple-system,"PingFang TC",sans-serif;
   --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
@@ -26,7 +26,7 @@
 @media (prefers-color-scheme:dark){:root{
   --bg:#10161c; --surface:#18212a; --ink:#e6edf3; --muted:#93a2b1; --line:#2a3642;
   --accent:#7fb2e0; --accent-ink:#0d1a26; --hl:#5c4f12; --hl-ink:#fff3c2;
-  --them:#1d2833; --me:#1e3448; --warn:#f08a74; color-scheme:dark}}
+  --them:#1d2833; --me:#1e3448; --warn:#f08a74; --amber:#f0b95a; --amber-bg:#3a2f16; color-scheme:dark}}
 *{box-sizing:border-box}
 html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%}
@@ -76,6 +76,16 @@ select{font:inherit;font-size:16px;border:1px solid var(--line);border-radius:8p
 .example{font-family:var(--f-mono);font-size:.7rem;background:var(--hl);color:var(--hl-ink);border-radius:4px;padding:1px 6px}
 .tip{font-size:.85rem;color:var(--muted);background:var(--bg);border:1px dashed var(--line);border-radius:10px;padding:8px 10px}
 .foot{justify-content:center;gap:16px}
+.usage-row{display:flex;flex-direction:column;gap:4px}
+.usage-top{display:flex;justify-content:space-between;gap:8px;font-size:.88rem}
+.usage-top b{font-variant-numeric:tabular-nums;font-weight:500}
+.meter{height:8px;border-radius:999px;background:var(--bg);border:1px solid var(--line);overflow:hidden}
+.meter span{display:block;height:100%;width:0;background:var(--accent);border-radius:999px;transition:width .4s}
+.meter.warn span{background:var(--amber)}
+.meter.full span{background:var(--warn)}
+.fine{font-size:.8rem;color:var(--muted);margin:0}
+.banner{border-radius:12px;padding:10px 12px;font-size:.9rem;background:var(--amber-bg);color:var(--ink);border:1px solid var(--amber)}
+.banner.full{border-color:var(--warn)}
 .engine{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted)}
 .link{background:none;border:0;color:var(--muted);font:inherit;font-size:.85rem;text-decoration:underline;cursor:pointer}
 @media (prefers-reduced-motion:no-preference){.msg{animation:in .25s ease-out both}@keyframes in{from{transform:translateY(4px)}to{transform:none}}}
@@ -88,10 +98,13 @@ select{font:inherit;font-size:16px;border:1px solid var(--line);border-radius:8p
     <p class="sub">貼上 IG 訊息或上傳對話截圖翻成中文，再把你的回覆翻回對方的語言。</p>
   </header>
 
+  <div class="banner" id="usageBanner" role="status" hidden></div>
+
   <!-- 通關密碼 -->
   <section class="card" id="passCard" hidden>
     <div class="label">第一次使用</div>
     <div>輸入朋友給你的通關密碼，之後這支手機就不用再輸入。</div>
+    <p class="fine">翻譯年糕是朋友間共用的額度，每一次翻譯都會實際花錢（截圖約 NT$0.2、文字約 NT$0.1），請在需要時再用。訊息會送到 AI 服務翻譯，請不要拿來翻密碼、身分證、銀行或其他敏感資料。</p>
     <input id="passInput" type="password" autocomplete="off" placeholder="通關密碼">
     <div class="row"><button class="btn" id="passSave">開始使用</button></div>
     <div class="status" id="passStatus"></div>
@@ -156,6 +169,20 @@ select{font:inherit;font-size:16px;border:1px solid var(--line);border-radius:8p
     </div>
   </section>
 
+  <section class="card" id="usageCard" hidden>
+    <div class="label">共用額度</div>
+    <div class="usage-row">
+      <div class="usage-top"><span>今天已翻譯</span><b id="uToday"></b></div>
+      <div class="meter" id="mToday"><span></span></div>
+    </div>
+    <div class="usage-row">
+      <div class="usage-top"><span>本月估算費用</span><b id="uMonth"></b></div>
+      <div class="meter" id="mMonth"><span></span></div>
+    </div>
+    <p class="fine" id="uDetail"></p>
+    <p class="fine">每次翻譯都會花錢，大家共用同一個額度。請不要翻譯密碼、身分證、銀行等敏感資料。</p>
+  </section>
+
   <div class="tip" id="installTip" hidden></div>
   <div class="foot row">
     <label class="engine" for="engine">翻譯引擎
@@ -214,6 +241,7 @@ $("passSave").onclick = () => {
   const v = $("passInput").value.trim();
   if(!v){ needPass("請輸入通關密碼。"); return; }
   store.set("pass", v); $("passCard").hidden = true; $("passInput").value = "";
+  loadUsage();
 };
 $("changePass").onclick = () => { store.del("pass"); needPass(""); };
 if(!store.get("pass")) needPass("");
@@ -299,7 +327,10 @@ function shrink(file){
 /* ---------- 呼叫後端 ---------- */
 const ERR = {
   bad_pass: "通關密碼不對，請重新輸入。",
-  daily_limit: "今天的翻譯次數用完了，明天再來。",
+  daily_limit: "今天的共用翻譯次數用完了，明天再來。",
+  monthly_budget: "本月的共用額度用完了，下個月 1 號會自動恢復。",
+  no_credit: "翻譯服務的儲值額度用完了，請通知管理者儲值。",
+  bad_api_key: "翻譯服務的金鑰設定有問題，請通知管理者。",
   busy: "Claude 現在比較忙，等幾秒再按一次。",
   bad_output: "結果格式有誤，再按一次試試。",
   bad_request: "內容無法處理，換一張截圖或改貼文字。",
@@ -312,6 +343,53 @@ function status(which, msg, err){
   const el = $(which + "Status");
   el.className = "status" + (err ? " err" : ""); el.textContent = msg || "";
 }
+/* ---------- 用量提示 ---------- */
+const ntd = (usd, rate) => "NT$" + (usd * rate < 10 ? (usd * rate).toFixed(1) : Math.round(usd * rate).toLocaleString());
+function setMeter(id, ratio){
+  const m = $(id);
+  m.querySelector("span").style.width = Math.min(100, Math.round(ratio * 100)) + "%";
+  m.classList.toggle("warn", ratio >= 0.8 && ratio < 1);
+  m.classList.toggle("full", ratio >= 1);
+}
+function updateUsage(u){
+  if(!u || !u.tracking) return;
+  $("usageCard").hidden = false;
+  const rate = u.twdRate || 32;
+  $("uToday").textContent = `${u.today} / ${u.dailyLimit} 次`;
+  setMeter("mToday", u.dailyLimit ? u.today / u.dailyLimit : 0);
+  const hasBudget = u.monthBudgetUSD > 0;
+  $("uMonth").textContent = hasBudget
+    ? `${ntd(u.monthCostUSD, rate)} / ${ntd(u.monthBudgetUSD, rate)}`
+    : ntd(u.monthCostUSD, rate);
+  setMeter("mMonth", hasBudget ? u.monthCostUSD / u.monthBudgetUSD : 0);
+  $("mMonth").hidden = !hasBudget;
+  $("uDetail").textContent = `本月共 ${u.monthRequests.toLocaleString()} 次、${u.monthTokens.toLocaleString()} tokens。費用為依官方價格的估算，實際以帳單為準。`;
+
+  const dayR = u.dailyLimit ? u.today / u.dailyLimit : 0;
+  const monR = hasBudget ? u.monthCostUSD / u.monthBudgetUSD : 0;
+  const b = $("usageBanner");
+  let msg = "";
+  if(monR >= 1) msg = "本月的共用額度已經用完，翻譯暫停到下個月 1 號。";
+  else if(dayR >= 1) msg = "今天的共用翻譯次數已經用完，明天會自動恢復。";
+  else if(monR >= 0.8) msg = `本月額度已用 ${Math.round(monR*100)}%，剩下約 ${ntd(u.monthBudgetUSD - u.monthCostUSD, rate)}。`;
+  else if(dayR >= 0.8) msg = `今天已用 ${u.today} 次，剩下 ${u.dailyLimit - u.today} 次。`;
+  b.textContent = msg;
+  b.hidden = !msg;
+  b.classList.toggle("full", monR >= 1 || dayR >= 1);
+}
+function doneMsg(u){
+  if(u && u.lastCostUSD != null) return `完成，這次約 NT$${(u.lastCostUSD * (u.twdRate || 32)).toFixed(2)}`;
+  return "";
+}
+async function loadUsage(){
+  const pass = store.get("pass");
+  if(!pass || !API_URL || API_URL.includes("YOUR-")) return;
+  try{
+    const res = await fetch(API_URL.replace(/\/translate$/, "/usage"), { headers: { "X-Pass": pass } });
+    if(res.ok){ const d = await res.json(); updateUsage(d._usage); }
+  }catch(e){}
+}
+
 async function callApi(payload){
   const pass = store.get("pass");
   if(!pass){ needPass(""); throw { code: "no_pass" }; }
@@ -326,6 +404,8 @@ async function callApi(payload){
   }catch(e){ throw { code: "network" }; }
   let data = null;
   try{ data = await res.json(); }catch(e){}
+  if(data?._usage) updateUsage(data._usage);
+  if(data?.error === "no_credit"){ const b = $("usageBanner"); b.textContent = ERR.no_credit; b.classList.add("full"); b.hidden = false; }
   if(!res.ok){
     const code = data?.error || "network";
     if(code === "bad_pass"){ store.del("pass"); needPass(ERR.bad_pass); }
@@ -348,7 +428,7 @@ $("readBtn").onclick = async () => {
     renderResult(r, false);
     lastLang = r.lang || lastLang;
     context = r.messages.slice(-6).map(m => `${m.side === "me" ? "我" : "對方"}：${m.original}`);
-    status("read", "");
+    status("read", doneMsg(r._usage));
   }catch(e){
     if(e?.code !== "no_pass") status("read", msgFor(e?.code || (e?.message === "image" ? "bad_request" : "")), true);
   }finally{
@@ -385,7 +465,7 @@ $("replyBtn").onclick = async () => {
       d.append(b); box.append(d);
     });
     $("optCard").hidden = false;
-    status("reply", "");
+    status("reply", doneMsg(r._usage));
   }catch(e){
     if(e?.code !== "no_pass") status("reply", msgFor(e?.code), true);
   }finally{
@@ -429,6 +509,7 @@ if("serviceWorker" in navigator){
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 takeShared();
+loadUsage();
 </script>
 </body>
 </html>
