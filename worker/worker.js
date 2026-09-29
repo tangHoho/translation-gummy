@@ -4,12 +4,12 @@
 // 不記錄任何訊息內容。
 
 // 後端版本號：每次更新 Worker 都改這裡
-const WORKER_VERSION = "1.1.0";
+const WORKER_VERSION = "1.2.0";
 
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const MAX_IMAGES = 8;
-const MAX_IMAGE_B64 = 2_000_000; // 約 1.5MB 圖片
+const MAX_IMAGE_B64 = 3_000_000; // 約 2.2MB 圖片
 const MAX_TEXT = 8000;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const LANGS = ["英文", "日文", "韓文", "泰文", "越南文", "印尼文", "西班牙文", "法文", "德文", "馬來文", "菲律賓文", "繁體中文", "簡體中文"];
@@ -19,7 +19,8 @@ export default {
   async fetch(req, env) {
     const origin = req.headers.get("Origin") || "";
     const allowed = (env.ALLOWED_ORIGINS || "").split(",").map(s => s.trim()).filter(Boolean);
-    const originOk = allowed.length === 0 || allowed.includes(origin);
+    // 沒有 Origin 的是 iPhone 捷徑這類非瀏覽器程式（仍需通關密碼）；瀏覽器一定會帶 Origin
+    const originOk = allowed.length === 0 || !origin || allowed.includes(origin);
     const cors = {
       "Access-Control-Allow-Origin": originOk && origin ? origin : "null",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -38,7 +39,12 @@ export default {
     if (!originOk) return json({ error: "forbidden" }, 403);
 
     const pass = req.headers.get("X-Pass") || "";
-    if (!env.PASSCODE || !safeEqual(pass, env.PASSCODE)) return json({ error: "bad_pass" }, 401);
+    if (!env.PASSCODE || !safeEqual(pass, env.PASSCODE)) {
+      const fromShortcut = (req.headers.get("Content-Type") || "").includes("multipart/form-data");
+      return fromShortcut
+        ? new Response(formatText({ error: "bad_pass" }), { status: 401, headers: { ...cors, "Content-Type": "text/plain; charset=utf-8" } })
+        : json({ error: "bad_pass" }, 401);
+    }
 
     const meter = new Meter(env);
     await meter.load();
@@ -49,17 +55,21 @@ export default {
     if (!env.ANTHROPIC_API_KEY && !env.GEMINI_API_KEY) return json({ error: "server_not_ready" }, 500);
 
     let body;
-    try { body = await req.json(); } catch { return json({ error: "bad_request" }, 400); }
+    try { body = await readBody(req); } catch { return json({ error: "bad_request" }, 400); }
+    const asText = body.format === "text";
+    const reply = (obj, status = 200) => asText
+      ? new Response(formatText(obj, body.mode), { status, headers: { ...cors, "Content-Type": "text/plain; charset=utf-8" } })
+      : json(obj, status);
 
     // 上限檢查：每月預算、每日次數
-    if (meter.overBudget()) return json({ error: "monthly_budget", _usage: meter.summary() }, 429);
-    if (meter.overDaily()) return json({ error: "daily_limit", _usage: meter.summary() }, 429);
+    if (meter.overBudget()) return reply({ error: "monthly_budget", _usage: meter.summary() }, 429);
+    if (meter.overDaily()) return reply({ error: "daily_limit", _usage: meter.summary() }, 429);
 
     let content;
     try {
       content = body.mode === "reply" ? buildReply(body) : buildRead(body);
     } catch (e) {
-      return json({ error: "bad_request", detail: String(e.message || e) }, 400);
+      return reply({ error: "bad_request", detail: String(e.message || e) }, 400);
     }
 
     const engine = pickEngine(body.engine, env);
@@ -92,16 +102,85 @@ export default {
       out = await call(used);
     }
     if (out.usage) await meter.addTokens(used, out.usage);
-    if (out.error) return json({ error: out.error, status: out.status, engine: used, detail: out.detail, _usage: meter.summary() }, 502);
+    if (out.error) return reply({ error: out.error, status: out.status, engine: used, detail: out.detail, _usage: meter.summary() }, 502);
 
     const parsed = extractJSON(out.text);
-    if (!parsed || typeof parsed !== "object") return json({ error: "bad_output", _usage: meter.summary() }, 502);
+    if (!parsed || typeof parsed !== "object") return reply({ error: "bad_output", _usage: meter.summary() }, 502);
     parsed._engine = used;
     if (fellBack) parsed._fallbackFrom = engine;
     parsed._usage = meter.summary();
-    return json(parsed);
+    return reply(parsed);
   },
 };
+
+// ---------- 讀取請求：JSON（網頁）或表單上傳（iPhone 捷徑） ----------
+async function readBody(req) {
+  const ct = req.headers.get("Content-Type") || "";
+  if (!ct.includes("multipart/form-data")) return req.json();
+  const f = await req.formData();
+  const get = k => (typeof f.get(k) === "string" ? f.get(k) : "");
+  const body = {
+    mode: get("mode") || "read", text: get("text"), engine: get("engine"), format: get("format"),
+    lang: get("lang"), tone: get("tone"), gender: get("gender"), images: [],
+  };
+  for (const [, v] of f.entries()) {
+    if (typeof v === "string" || !v || body.images.length >= MAX_IMAGES) continue;
+    const bytes = new Uint8Array(await v.arrayBuffer());
+    const type = sniffImage(bytes);
+    if (type) body.images.push({ media_type: type, data: toBase64(bytes) });
+  }
+  return body;
+}
+function sniffImage(b) {
+  if (b[0] === 0xff && b[1] === 0xd8) return "image/jpeg";
+  if (b[0] === 0x89 && b[1] === 0x50) return "image/png";
+  if (b[0] === 0x52 && b[1] === 0x49 && b[8] === 0x57) return "image/webp";
+  if (b[0] === 0x47 && b[1] === 0x49) return "image/gif";
+  return null;
+}
+function toBase64(u8) {
+  let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+// ---------- 純文字結果（給 iPhone 捷徑顯示） ----------
+const TEXT_ERR = {
+  bad_pass: "通關密碼不對，請修改捷徑裡的密碼。",
+  daily_limit: "今天的共用翻譯次數用完了，明天會自動恢復。",
+  monthly_budget: "本月的共用額度用完了，下個月 1 號會自動恢復。",
+  no_credit: "翻譯服務的儲值額度用完了，請通知管理者。",
+  busy: "翻譯服務現在比較忙，等幾秒再試一次。",
+  rate_limited: "使用頻率超過上限，等一分鐘再試。",
+  bad_request: "沒有收到截圖或文字，請檢查捷徑設定。",
+  bad_output: "結果格式有誤，再試一次。",
+};
+function formatText(r, mode) {
+  if (r.error) return "⚠️ " + (TEXT_ERR[r.error] || "翻譯服務暫時出錯，再試一次。") + (r.detail ? `\n（${r.detail}）` : "");
+  const lines = [];
+  if (mode === "reply") {
+    (r.options || []).forEach((o, i) => {
+      lines.push(`${i + 1}. ${o.text || ""}`);
+      if (o.roman) lines.push(`   ${o.roman}`);
+      if (o.back) lines.push(`   意思：${o.back}`);
+      lines.push("");
+    });
+  } else {
+    if (r.summary) lines.push(`【${r.lang || "翻譯"}】${r.summary}`, "");
+    (r.messages || []).forEach(m => {
+      lines.push(`${m.side === "me" ? "我" : "對方"}：${m.original || ""}`);
+      lines.push(`→ ${m.translation || ""}`);
+      if (m.note) lines.push(`💡 ${m.note}`);
+      lines.push("");
+    });
+  }
+  const u = r._usage;
+  if (u?.lastCostUSD != null) {
+    const ntd = (u.lastCostUSD * (u.twdRate || 32)).toFixed(2);
+    lines.push(`— 這次約 NT$${ntd}${u.tracking ? `・今天 ${u.today}/${u.dailyLimit} 次` : ""}`);
+  }
+  return lines.join("\n").trim();
+}
 
 // ---------- 用量與費用 ----------
 // 每百萬 token 的美元價格（官方定價，價格變動時改這裡）

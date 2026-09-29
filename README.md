@@ -60,6 +60,8 @@ npx wrangler deploy
 - **iPhone**：用 Safari 打開 →「分享」→「加入主畫面」。用法是截圖後打開 App 按「上傳截圖」，或在訊息裡複製文字貼上
 - **Android**：用 Chrome 打開 → 選單 →「安裝應用程式」。安裝後截圖時按「分享」→ 選「翻譯年糕」就會直接翻譯
 
+**iPhone 快速翻譯**：設定「輕點背面兩下」自動截圖翻譯，步驟在 `docs/iPhone捷徑設定.md`。HoHo 做好捷徑後，用 iCloud 連結分享給朋友即可。
+
 想換密碼（例如有人外流）：`npx wrangler secret put PASSCODE` 重設，大家下次使用時會被要求重新輸入。
 
 ## 可調整的設定（`worker/wrangler.toml`）
