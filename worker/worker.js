@@ -4,7 +4,7 @@
 // 不記錄任何訊息內容。
 
 // 後端版本號：每次更新 Worker 都改這裡
-const WORKER_VERSION = "1.0.1";
+const WORKER_VERSION = "1.0.2";
 
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
@@ -67,19 +67,37 @@ export default {
 
     await meter.countRequest();
 
-    let out;
-    try {
-      out = engine === "gemini" ? await callGemini(content, env) : await callClaude(content, env);
-    } catch (e) {
-      console.log(`[${engine}] fetch failed: ${String(e?.message || e).slice(0, 200)}`);
-      return json({ error: "upstream", engine, detail: String(e?.message || e).slice(0, 200), _usage: meter.summary() }, 502);
+    // 伺服器忙時：先等一下重試一次，還是忙就改用另一個引擎（有金鑰才會換）
+    const call = async eng => {
+      try {
+        return eng === "gemini" ? await callGemini(content, env) : await callClaude(content, env);
+      } catch (e) {
+        console.log(`[${eng}] fetch failed: ${String(e?.message || e).slice(0, 200)}`);
+        return { error: "upstream", detail: String(e?.message || e).slice(0, 200) };
+      }
+    };
+    let used = engine;
+    let out = await call(used);
+    if (out.error === "busy") {
+      await new Promise(r => setTimeout(r, 1500));
+      out = await call(used);
     }
-    if (out.usage) await meter.addTokens(engine, out.usage);
-    if (out.error) return json({ error: out.error, status: out.status, engine, detail: out.detail, _usage: meter.summary() }, 502);
+    const other = used === "claude" ? "gemini" : "claude";
+    const canSwitch = env.FALLBACK !== "0" && (other === "gemini" ? env.GEMINI_API_KEY : env.ANTHROPIC_API_KEY);
+    let fellBack = false;
+    if ((out.error === "busy" || out.error === "upstream") && canSwitch) {
+      console.log(`[${used}] still failing (${out.status || out.error}), falling back to ${other}`);
+      used = other;
+      fellBack = true;
+      out = await call(used);
+    }
+    if (out.usage) await meter.addTokens(used, out.usage);
+    if (out.error) return json({ error: out.error, status: out.status, engine: used, detail: out.detail, _usage: meter.summary() }, 502);
 
     const parsed = extractJSON(out.text);
     if (!parsed || typeof parsed !== "object") return json({ error: "bad_output", _usage: meter.summary() }, 502);
-    parsed._engine = engine;
+    parsed._engine = used;
+    if (fellBack) parsed._fallbackFrom = engine;
     parsed._usage = meter.summary();
     return json(parsed);
   },

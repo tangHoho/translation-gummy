@@ -21,6 +21,8 @@ MONTHLY_BUDGET_USD = "15"
 TWD_RATE = "32"
 # 預設翻譯引擎：claude 或 gemini（兩把金鑰都設定時，App 裡可以自己切換）
 ENGINE = "claude"
+# 引擎忙碌時自動改用另一個引擎（1 開啟、0 關閉）
+FALLBACK = "1"
 # 使用的 Claude 模型
 MODEL = "claude-haiku-4-5-20251001"
 # 使用的 Gemini 模型與思考程度（low 最快）
@@ -29,9 +31,9 @@ GEMINI_THINKING = "low"
 
 # 每日次數與每月用量統計用（沒有綁定的話，用量提示和上限都不會生效）。先執行：npx wrangler kv namespace create USAGE
 # 再把拿到的 id 貼到下面，並把這三行前面的 # 拿掉
-[[kv_namespaces]]
-binding = "USAGE"
-id = "e507f6139ca04519a4d3138f7a81964b"
+# [[kv_namespaces]]
+# binding = "USAGE"
+# id = "PASTE_KV_ID_HERE"
 
 # 機密設定不要寫在這裡，用指令設定：
 #   npx wrangler secret put ANTHROPIC_API_KEY

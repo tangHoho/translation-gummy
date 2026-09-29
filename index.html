@@ -388,9 +388,11 @@ function updateUsage(u){
   b.hidden = !msg;
   b.classList.toggle("full", monR >= 1 || dayR >= 1);
 }
-function doneMsg(u){
-  if(u && u.lastCostUSD != null) return `完成，這次約 NT$${(u.lastCostUSD * (u.twdRate || 32)).toFixed(2)}`;
-  return "";
+function doneMsg(u, r){
+  const name = e => e === "gemini" ? "Gemini" : "Claude";
+  const fb = r?._fallbackFrom ? `${name(r._fallbackFrom)} 太忙，這次改用 ${name(r._engine)} 翻譯。` : "";
+  const cost = u && u.lastCostUSD != null ? `完成，這次約 NT$${(u.lastCostUSD * (u.twdRate || 32)).toFixed(2)}` : "";
+  return [fb, cost].filter(Boolean).join(" ");
 }
 async function loadUsage(){
   const pass = store.get("pass");
@@ -441,7 +443,7 @@ $("readBtn").onclick = async () => {
     renderResult(r, false);
     lastLang = r.lang || lastLang;
     context = r.messages.slice(-6).map(m => `${m.side === "me" ? "我" : "對方"}：${m.original}`);
-    status("read", doneMsg(r._usage));
+    status("read", doneMsg(r._usage, r));
   }catch(e){
     if(e?.code !== "no_pass") status("read", msgFor(e?.code || (e?.message === "image" ? "bad_request" : "")) + (e?.info || ""), true);
   }finally{
@@ -478,7 +480,7 @@ $("replyBtn").onclick = async () => {
       d.append(b); box.append(d);
     });
     $("optCard").hidden = false;
-    status("reply", doneMsg(r._usage));
+    status("reply", doneMsg(r._usage, r));
   }catch(e){
     if(e?.code !== "no_pass") status("reply", msgFor(e?.code) + (e?.info || ""), true);
   }finally{
